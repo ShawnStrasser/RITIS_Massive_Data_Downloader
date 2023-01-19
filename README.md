@@ -8,9 +8,9 @@ Currently, the RITIS API supports downloading data from TMC roadway segments onl
 
 Three different methods of downloading data are provided, including:
 
-    1. single_download() - One-time download for single date range
-    2. daily_download() - Download data for each day starting at the date in the last_run file (default is last_run.txt) through yesterday. This method is intended to be called on a daily schedule, for example, use Windows task scheduler to run at 1am each morning.
-    3. continuous_download() - Meant to run as a background process throughout the day. It downloads most recent data on regular user specified intervals. After the end_time has elapsed then the process terminates. This method is meant to be run on a daily schedule, just like the daily_download() method.
+   1. single_download() - One-time download for single date range
+   2. daily_download() - Download data for each day starting at the date in the last_run file (default is last_run.txt) through yesterday. This method is intended to be called on a daily schedule, for example, use Windows task scheduler to run at 1am each morning.
+   3. continuous_download() - Meant to run as a background process throughout the day. It downloads most recent data on regular user specified intervals. After the end_time has elapsed then the process terminates. This method is meant to be run on a daily schedule, just like the daily_download() method.
 
 ## Example Usage
 ```python
