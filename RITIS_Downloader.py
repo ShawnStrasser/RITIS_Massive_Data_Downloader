@@ -33,7 +33,7 @@ class RITIS_Downloader:
     '''
     def __init__(self, segments_path='XD_segments.txt', download_path='Data/', start_time='00:00:00', end_time='23:59:00', 
         bin_size=15, units="seconds", columns = ["speed","average_speed","reference_speed","travel_time_minutes","confidence_score","cvalue"],
-        confidence_score=[30, 20, 10], last_run='last_run.txt', continuous_download_interval=60):
+        confidence_score=[30, 20, 10], last_run='last_run.txt', continuous_download_interval=60, browser_verification=True):
         
         # Set user variables
         self.download_path = download_path #path data is downloaded to
@@ -45,6 +45,11 @@ class RITIS_Downloader:
         self.confidence_score = confidence_score #provide list including 10 and/or 20 and/or 30 [10,20,30] see RITIS help for details, but 30 is best
         self.last_run = last_run #file name storing date that daily_download() was last run
         self.continuous_download_interval = continuous_download_interval #interval at which continuous_download() will download new data, in minutes
+        
+        # This option is provided to allow running the MechanicalSoup browser without verification.
+        # To run the code when connected to the internet through the ODOT VPN, set browser_verification=False
+        # If connecting to internet generally then leave verification on
+        self.verify = browser_verification
 
         # Get XD segments list
         with open(segments_path, 'r') as file:
@@ -80,7 +85,7 @@ class RITIS_Downloader:
     def __login(self):
         email, password = self.__get_credentials()
         browser = mechanicalsoup.StatefulBrowser()
-        browser.open(self.url, verify=False)
+        browser.open(self.url, verify=self.verify)
         # Add certificaiton
         #browser.session.verify = certifi.where()
         #browser.session.trust_env = False
