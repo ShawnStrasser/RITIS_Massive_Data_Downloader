@@ -31,12 +31,12 @@ class RITIS_Downloader:
     MechanicalSoup package is used to handle browser interaction/requests, it is built on top of the requests library. See documentation. 
         
     '''
-    def __init__(self, segments_path='XD_segments.txt', download_path='Data/', start_time='00:00:00', end_time='23:59:00', 
+    def __init__(self, segments_path='XD_segments.txt', download_path='Data', start_time='00:00:00', end_time='23:59:00', 
         bin_size=15, units="seconds", columns = ["speed","average_speed","reference_speed","travel_time_minutes","confidence_score","cvalue"],
         confidence_score=[30, 20, 10], last_run='last_run.txt', continuous_download_interval=60, browser_verification=True):
         
         # Set user variables
-        self.download_path = download_path #path data is downloaded to
+        self.download_path = f'{download_path}/' #path data is downloaded to
         self.start_time = start_time #time of day range will be limited to between start_time and end_time
         self.end_time = end_time 
         self.bin_size = bin_size #bin size in minutes, choose from [5,10,15,60]
@@ -51,9 +51,17 @@ class RITIS_Downloader:
         # If connecting to internet generally then leave verification on
         self.verify = browser_verification
 
-        # Get XD segments list
+        # Get XD segments list (remove spaces)
         with open(segments_path, 'r') as file:
-            self.xd_segments = file.read().split(',')
+            self.xd_segments = [x.strip() for x in file.read().split(',')]
+
+        # Get dir of this file
+        self.dir = os.path.dirname(os.path.realpath(__file__))
+        # combine it with 'atlas_version.txt'
+        atlas_version_path = os.path.join(self.dir, 'atlas_version.txt')
+        # Get Atlas version
+        with open(atlas_version_path, 'r') as file:
+            self.atlas_version = file.read()
 
         # Set URLs
         self.url = 'https://pda.ritis.org/suite/download/' #page to log in to
@@ -61,10 +69,10 @@ class RITIS_Downloader:
         self.url_history = 'https://pda.ritis.org/api/user_history/' #API that returns job history
 
     # Link that returns the folder contents for a job
-    def __download_link(self, uuid):
+    def _download_link(self, uuid):
         return f'https://pda.ritis.org/export/download/{uuid}?dl=1'
 
-    def __get_credentials(self):
+    def _get_credentials(self):
         try:
             email = keyring.get_password('RITIS', 'email')
             password = keyring.get_password('RITIS', email)
@@ -82,9 +90,10 @@ class RITIS_Downloader:
                 print('There are two credentials with that name, one used to look up email, the other uses email to look up password.')
         return email, password 
 
-    def __login(self):
-        email, password = self.__get_credentials()
+    def _login(self):
+        email, password = self._get_credentials()
         browser = mechanicalsoup.StatefulBrowser()
+        #browser.session.verify = '_.ritis.org.crt'
         browser.open(self.url, verify=self.verify)
         # Add certificaiton
         #browser.session.verify = certifi.where()
@@ -95,11 +104,12 @@ class RITIS_Downloader:
         browser['username'] = email
         browser['password'] = password
         response = browser.submit_selected()
-        print(response)
+        if response.status_code == 200:
+            print('Logged in')
         return browser, email
 
 
-    def __submit_job(self, browser, email, start_date, end_date, name, start_time=None, end_time=None):
+    def _submit_job(self, browser, email, start_date, end_date, name, start_time=None, end_time=None):
         # Use default start/end times if none given
         if start_time is None:
             start_time = self.start_time
@@ -114,6 +124,7 @@ class RITIS_Downloader:
         # Plug variables into data json. This was derived from the POST that gets sent by clicking the SUBMIT button.
         # Using the Dev Tools network tab, the cURL was coppied and transformed into json by ChatGPT. Thank you, AI overlord!
         # This idea was inspired by https://www.youtube.com/watch?v=DqtlR0y0suo
+        # Updated map, and changed atlas version to 54 in September 2023
         data = {
             "DATASOURCES": [{
                 "id": "inrix_xd",
@@ -127,7 +138,7 @@ class RITIS_Downloader:
             "ROAD_DETAILS": [{
                 "SEGMENT_IDS": self.xd_segments,
                 "DATASOURCE_ID": "inrix_xd",
-                "ATLAS_VERSION_ID": 49
+                "ATLAS_VERSION_ID": self.atlas_version
             }],
             "DATERANGES": date_ranges,
             "ENTIREROAD": False,
@@ -142,9 +153,10 @@ class RITIS_Downloader:
         }
 
         browser.post(self.url_submit, json=data)
+        print(f'Submitted job for {name}')
 
 
-    def __get_dates(self):
+    def _get_dates(self):
         # Returns a list of dates that need to be updated through yesterday
         
         today = datetime.now().date()
@@ -161,7 +173,7 @@ class RITIS_Downloader:
         
         return date_list
 
-    def __update_job_status(self, browser, jobs):
+    def _update_job_status(self, browser, jobs):
         # Job status from RITIS, in JSON format
         history = browser.post(self.url_history).json() 
         # Update each job with uuid and status (pending=1, ready=2, downloaded=3)
@@ -175,7 +187,7 @@ class RITIS_Downloader:
         return jobs
 
     # Function by ChatGPT, extracts file from zipped folder without saving to local drive so less work overall
-    def __extract_file_to_df(self, data, file_name):
+    def _extract_file_to_df(self, data, file_name):
         # Create a BytesIO object from the data
         data = io.BytesIO(data)
         # Open the zip file from the BytesIO object
@@ -191,31 +203,34 @@ class RITIS_Downloader:
         df = df.sort_index(level=0)
         return df
 
-    def __download_job(self, browser, jobs):
+    def _download_job(self, browser, jobs):
         # Download all jobs that are ready
         # This downloads the data, the content has to be saved as a zip folder
         for key, value in jobs.items():
             if jobs[key]['status'] == 3 and jobs[key]['downloaded'] == False:
                 print(f'Downloading {key}')
-                url = self.__download_link(jobs[key]['uuid'])
+                url = self._download_link(jobs[key]['uuid'])
                 response = browser.open(url)
                 # Extract file into dataframe
-                df = self.__extract_file_to_df(response.content, f'{key}.csv')
+                df = self._extract_file_to_df(response.content, f'{key}.csv')
+                # Assert that the data is not empty
+                assert not df.empty, f"Data is empty for {key}"
+                # Save the data as a parquet file
                 df.to_parquet(f'{self.download_path}{key}.parquet')
                 print('Saved parquet file for ', key)
 
 
-    def __download_all_remaining(self, browser, jobs, sleep=60):
+    def _download_all_remaining(self, browser, jobs, sleep=60*2):
         # Download all remaining jobs
         while any(job['status'] != 3 for job in jobs.values()):
             time.sleep(sleep)
-            jobs = self.__update_job_status(browser, jobs)
-            self.__download_job(browser, jobs)                     
+            jobs = self._update_job_status(browser, jobs)
+            self._download_job(browser, jobs)                     
 
-    def daily_download(self):
+    def daily_download(self, sleep=60*2):
 
         # All the dates that need to be run, these will be iterated through
-        date_list = self.__get_dates()
+        date_list = self._get_dates()
         # If date_list is empty then exit function
         if not date_list:
             print("Data is already updated through yesterday.")
@@ -225,18 +240,18 @@ class RITIS_Downloader:
         jobs = {key: {'status': 0, 'uuid': ""} for key in date_list}
 
         # Initiate browser and log in
-        browser, email = self.__login()
+        browser, email = self._login()
 
         # Step through each date one at a time, from the last run date until today
         for date in date_list:
-            self.__submit_job(browser, email, start_date=date, end_date=date, name=date)
+            self._submit_job(browser, email, start_date=date, end_date=date, name=date)
             # Wait a little and then update status of each job, and download those that are ready
-            time.sleep(120)
-            jobs = self.__update_job_status(browser, jobs)
-            self.__download_job(browser, jobs)
+            time.sleep(sleep)
+            jobs = self._update_job_status(browser, jobs)
+            self._download_job(browser, jobs)
 
         # Download any remaining jobs
-        self.__download_all_remaining(browser, jobs)            
+        self._download_all_remaining(browser, jobs)            
 
         # Close the browser
         browser.close()
@@ -251,11 +266,11 @@ class RITIS_Downloader:
         # Initiate dicitonary to track job status
         jobs = {job_name: {'status': 0, 'uuid': ""}}
         # Initiate browser and log in
-        browser, email = self.__login()    
+        browser, email = self._login()    
         # Submit job
-        self.__submit_job(browser, email, start_date=start_date, end_date=end_date, name=job_name)    
+        self._submit_job(browser, email, start_date=start_date, end_date=end_date, name=job_name)    
         # Download
-        self.__download_all_remaining(browser, jobs)
+        self._download_all_remaining(browser, jobs)
         # Close the browser
         browser.close()
 
@@ -270,7 +285,7 @@ class RITIS_Downloader:
         today = datetime.now().strftime("%Y-%m-%d")
 
         # Initiate browser and log in
-        browser, email = self.__login()
+        browser, email = self._login()
 
         # Time that the while loop below will end after
         end_process_time = datetime.strptime(f'{today} {self.end_time}', "%Y-%m-%d %H:%M:%S")
@@ -301,9 +316,9 @@ class RITIS_Downloader:
             jobs = {name: {'status': 0, 'uuid': ""}}
   
             # Submit job
-            self.__submit_job(browser, email, start_date=today, end_date=today, start_time=start_time_str, end_time=end_time_str, name=name)    
+            self._submit_job(browser, email, start_date=today, end_date=today, start_time=start_time_str, end_time=end_time_str, name=name)    
             # Download
-            self.__download_all_remaining(browser, jobs, sleep=30)
+            self._download_all_remaining(browser, jobs, sleep=30)
 
             # Combine files, if needed
             df = pd.read_parquet(f'{self.download_path}{name}.parquet') # Read in file that was just downloaded
